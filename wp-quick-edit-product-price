@@ -1,0 +1,169 @@
+/**
+ * Quick edit product variation
+ */
+
+function display_quick_edit_variation_prices( $column, $post_id ) {
+    if ( $column == 'name' ) {
+        $product = wc_get_product( $post_id );
+        if ( $product->is_type( 'variable' ) ) {
+            $variations = $product->get_available_variations();
+            ?>
+            <div class="variations-container">
+            <?php
+            foreach ( $variations as $variation ) {
+                $variation_id = $variation['variation_id'];
+                $variation_obj = wc_get_product( $variation_id );
+                $regular_price = $variation_obj->get_regular_price();
+                $sale_price = $variation_obj->get_sale_price();
+                ?>
+                <div class="variation-price" data-product-id="<?php echo $post_id; ?>" data-variation-id="<?php echo $variation_id; ?>">
+                    <div class="variation-name">
+                        <?php echo $variation_obj->get_name(); ?>
+                    </div>
+                    <div class="variation-price-fields">
+                        <label for="regular_price_<?php echo $variation_id; ?>"><?php _e( 'Price:', 'woocommerce' ); ?></label>
+                        <input type="text" id="regular_price_<?php echo $variation_id; ?>" name="_regular_price[<?php echo $variation_id; ?>]" value="<?php echo $regular_price; ?>" size="6" placeholder="<?php echo wc_format_localized_price( '0' ); ?>" class="short wc_input_price">
+                        <label for="sale_price_<?php echo $variation_id; ?>"><?php _e( 'Sale Price:', 'woocommerce' ); ?></label>
+                        <input type="text" id="sale_price_<?php echo $variation_id; ?>" name="_sale_price[<?php echo $variation_id; ?>]" value="<?php echo $sale_price; ?>" size="6" placeholder="<?php echo wc_format_localized_price( '0' ); ?>" class="short wc_input_price">
+                    </div>
+                </div>
+                <?php
+            }
+            ?>
+            <div class="variation-update">
+                <button type="button" class="button variation-update-button" data-product-id="<?php echo $post_id; ?>"><?php _e( 'Update', 'woocommerce' ); ?></button>
+            </div>
+            </div>
+            <?php
+        }
+    }
+}
+
+
+add_action( 'manage_product_posts_custom_column', 'display_quick_edit_variation_prices', 10, 2 );
+
+
+// Dodajemo funkciju koja će obrađivati zahteve za ažuriranje varijacija
+add_action( 'wp_ajax_update_variation_prices', 'update_variation_prices_callback' );
+
+function update_variation_prices_callback() {
+  if ( isset( $_POST['product_id'] ) ) {
+    $product_id = absint( $_POST['product_id'] );
+    $product = wc_get_product( $product_id );
+    
+    if ( $product ) {
+      // Pronalazimo sve varijacije za ovaj proizvod
+      $variations = $product->get_available_variations();
+      
+      foreach ( $variations as $variation ) {
+        $variation_id = $variation['variation_id'];
+        
+        // Ako postoji regularna cena za varijaciju, ažuriramo je
+        if ( isset( $_POST['_regular_price'][ $variation_id ] ) ) {
+          $regular_price = wc_clean( $_POST['_regular_price'][ $variation_id ] );
+          update_post_meta( $variation_id, '_regular_price', $regular_price );
+        }
+        
+        // Ako postoji cena za sniženje za varijaciju, ažuriramo je
+        if ( isset( $_POST['_sale_price'][ $variation_id ] ) ) {
+          $sale_price = wc_clean( $_POST['_sale_price'][ $variation_id ] );
+          update_post_meta( $variation_id, '_sale_price', $sale_price );
+        }
+      }
+      
+      wp_send_json_success( array( 'message' => 'Uspešno ažurirane varijacije' ) );
+    }
+  }
+  
+  wp_send_json_error( array( 'message' => 'Greška pri ažuriranju varijacija' ) );
+}
+
+
+
+
+add_action( 'admin_footer', 'my_custom_js' );
+
+function my_custom_js() {
+?>
+    <script type="text/javascript">
+    jQuery(document).ready(function($) {
+        // Funkcija koja se poziva kada se klikne na dugme za ažuriranje
+        function updateVariations() {
+            var productId = "<?php echo $product_id; ?>"; // Promenljiva koja sadrži ID proizvoda
+            var data = {
+                action: 'update_variations', // Naziv akcije koju obrađujemo u PHP-u
+                product_id: productId
+            };
+
+            // Iteriramo kroz sve varijacije i dodajemo ih u objekat data
+            $('.variation-price').each(function() {
+                var variationId = $(this).data('variation-id');
+                var regularPrice = $(this).find('input[name^=_regular_price]').val();
+                var salePrice = $(this).find('input[name^=_sale_price]').val();
+
+                data['variation_id_' + variationId + '_regular_price'] = regularPrice;
+                data['variation_id_' + variationId + '_sale_price'] = salePrice;
+            });
+
+            // Šaljemo AJAX zahtev
+            $.post(ajaxurl, data, function(response) {
+                // Ovde možemo dodati kod koji se izvršava nakon što se AJAX zahtev uspešno završi
+                console.log(response);
+            });
+        }
+
+        // Dodajemo event listener na dugme za ažuriranje
+        $('.variation-update-button').on('click', function() {
+            updateVariations();
+        });
+    });
+    </script>
+<?php
+}
+
+// Funkcija koja obrađuje AJAX zahtjev
+add_action( 'wp_ajax_update_variations', 'update_variations' );
+
+function update_variations() {
+    global $wpdb;
+    
+    // Učitavamo podatke iz AJAX zahtjeva
+    $productId = $_POST['product_id'];
+    $variations = array();
+
+    // Učitavamo varijacije iz POST parametara
+    foreach ($_POST as $key => $value) {
+        if (preg_match('/^variation_id_([0-9]+)_(.+)$/', $key, $matches)) {
+            $variationId = $matches[1];
+            $field = $matches[2];
+
+            if (!isset($variations[$variationId])) {
+                $variations[$variationId] = array(
+                    'id' => $variationId
+                );
+            }
+
+            $variations[$variationId][$field] = $value;
+        }
+    }
+
+    // DOdajemo nove vrednosti u bazu
+
+    // Prolazimo kroz sve varijacije u nizu $variations
+    foreach ( $variations as $variation ) {
+        // Pronađite postojeću varijaciju
+        $existing_variation = get_post( $variation['variationId'] );
+
+        // Ako je varijacija pronađena
+        if ( $existing_variation ) {
+            // Ažurirajte regularnu cenu i sniženu cenu
+            update_post_meta( $variation['variationId'], 'regular_price', $variation['regular_price'] );
+            update_post_meta( $variation['variationId'], 'sale_price', $variation['sale_price'] );
+        }
+    }
+    // Vratimo odgovor
+    wp_send_json_success($variations);
+	
+    // Završavamo izvođenje koda
+    die();
+}
